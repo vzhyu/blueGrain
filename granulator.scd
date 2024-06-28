@@ -6,21 +6,28 @@
 		~pathSplit = ~path.split();
 		~fileName = ~pathSplit[(~pathSplit.size) - 1];
 		~buf = Buffer.readChannel(s, ~path, channels:0);
+		~rec = Buffer.alloc(s, s.sampleRate*30);
+		~pickerMenu = [~fileName];
+		~pathDict = Dictionary.new();
+		~pathDict.put(~fileName, ~path);
 	})
 };
 
 ~init = {
+	~inMode = \buf;
 
 	~xBus = Bus.control(s, 1);
 	~yBus = Bus.control(s, 1);
+	~nPlayBus = Bus.control(s, 1);
 	~playBus = Bus.control(s, 1);
 	~ampBus = Bus.control(s, 1);
-
 	~sigBus = Bus.audio(s, 1);
 
+	~nRateValue = 1;
 	~durValue = 0.04;
 	~panValue = 0.0;
 	~rateValue = 1.0;
+	~nPosValue = 0.0;
 	~posValue = 0.0;
 	~freqValue = 10.0;
 	~pRateValue = 1.0;
@@ -67,6 +74,9 @@
 	~alertWidth = 300;
 	~recordNum = 0;
 
+	~gyroState = false;
+
+
 	~fileNameText = TextField.new(w)
 	.fixedWidth_(380)
 	.font_(~mainFont)
@@ -74,24 +84,39 @@
 	.value_(~fileName);
 
 	~picker = PopUpMenu.new(w)
-	.items_([~fileName, "White Noise", "Pink Noise", "Brown Noise", "Microphone"])
+	.items_(~pickerMenu)
 	.allowsReselection_(true)
-	.fixedWidth_(380)
+	.fixedWidth_(300)
 	.font_(~mainFont)
 	.canFocus_(false)
 	.action_({
 		arg n;
-		if(n.value == 0, {
-			~bufMode.();
+		if (n.item == "Recording", {
+			~buf = ~rec;
+		}, {
+			~fileName = n.item;
+			~buttonsActivate.();
+			~path = ~pathDict[~fileName];
+			~path.postln;
+			~buf = Buffer.readChannel(s, ~path, channels:0);
 		});
-		if(n.value > 0, {
-			~sigMode.();
+		~bufGrain.free;
+		~bufGrain = Synth(\bufGrain, [\buf, ~buf, \rate, ~rateValue, \pan, ~panValue, \dur, ~durValue, \freq, ~freqValue], ~grainGroup);
+		2.do({
+			~pressSwitchToggle.();
 		});
+
+		// if(n.value == 0, {
+		// 	~bufMode.();
+		// });
+		// if(n.value > 0, {
+		// 	~sigMode.();
+		// });
 
 		// choice.postln;
 	});
 
-	~switchOff = Button.new(w)
+	~nPlayButtonOff = Button.new(w)
 	.canFocus_(false)
 	.font_(~mainFont)
 	.fixedWidth_(80)
@@ -101,12 +126,23 @@
 		~warningWindow.(message: "Please select a valid file.");
 	});
 
-	~recordButtonOff = Button.new(w)
+
+	~switchOff = Button.new(w)
 	.canFocus_(false)
 	.font_(~mainFont)
 	.fixedWidth_(80)
 	.visible_(false)
-	.states_([["RECORD", Color.gray(0.8), Color.gray(0.5)]])
+	.states_([["GRAIN", Color.gray(0.8), Color.gray(0.5)]])
+	.action_({
+		~warningWindow.(message: "Please select a valid file.");
+	});
+
+	~recordButtonOff = Button.new(w)
+	.canFocus_(false)
+	.font_(~mainFont)
+	.fixedWidth_(100)
+	.visible_(false)
+	.states_([["Record to File", Color.gray(0.8), Color.gray(0.5)]])
 	.action_({
 		~warningWindow.(message: "Please select a valid file.");
 	});
@@ -114,7 +150,7 @@
 	~mouseToggleOff = Button.new(w)
 	.canFocus_(false)
 	.font_(~mainFont)
-	.fixedWidth_(150)
+	.fixedWidth_(130)
 	.visible_(false)
 	.states_([["Mouse Control", Color.gray(0.8), Color.gray(0.5)]])
 	.action_({
@@ -126,21 +162,21 @@
 	.font_(~mainFont)
 	.fixedWidth_(100)
 	.visible_(false)
-	.states_([["Autoplay", Color.gray(0.8), Color.gray(0.5)]])
+	.states_([["Scrub", Color.gray(0.8), Color.gray(0.5)]])
 	.action_({
 		~warningWindow.(message: "Please select a valid file.");
 	});
 	~recordButton = Button.new(w)
 	.canFocus_(false)
 	.font_(~mainFont)
-	.fixedWidth_(80)
+	.fixedWidth_(100)
 	// .states_([["⏺", Color.red, Color.fromHexString("#2185b0")], ["⏹", Color.yellow, Color.fromHexString("#2185b0")]])
-	.states_([["RECORD", Color.gray(0.8), ~buttonColor], ["RECORD", Color.red, ~buttonColor]])
+	.states_([["Record to File", Color.gray(0.8), ~buttonColor], ["Record to File", Color.red, ~buttonColor]])
 	.action_({
 		~recordButtonAction = {
 			if(~recordButton.value == (1), {
-				// s.record((~currentPath ++ Date.getDate ++ ".wav"));
-				s.record();
+				s.record((~currentPath ++ Date.getDate ++ ".wav"));
+				// s.record();
 			});
 			if(~recordButton.value == (0), {
 				s.stopRecording;
@@ -159,7 +195,7 @@
 	~fileButton = Button.new(w)
 	.canFocus_(false)
 	.font_(~mainFont)
-	.fixedWidth_(60)
+	.fixedWidth_(50)
 	.states_([["OPEN", Color.yellow, ~buttonColor]])
 	.action_({
 		FileDialog({
@@ -168,12 +204,21 @@
 			// path[0].postln;
 			~path = path[0];
 			~pathSplit = ~path.split();
+			~pathSplit.postln;
+			~currentPath = "";
+			~pathSplit.do({
+				arg i, j;
+				if (j < (~pathSplit.size - 1), {
+					~currentPath = ~currentPath ++ i ++ "/";
+				});
+			});
 			~fileName = ~pathSplit[(~pathSplit.size) - 1];
 			if (~mouseToggle.value == 0, {
 				// ~mouseRead.stop;
 				~pressMouseToggle.();
 				mouseTrue = true;
 			});
+			// ~playToggle.value.postln;
 			if (~playToggle.value == 0, {
 				~pressPlayToggle.();
 				playTrue = true;
@@ -192,6 +237,9 @@
 					// ~buf.postln;
 					~buttonsActivate.();
 					~bufGrain = Synth(\bufGrain, [\buf, ~buf, \rate, ~rateValue, \pan, ~panValue, \dur, ~durValue, \freq, ~freqValue], ~grainGroup);
+					2.do({
+						~pressSwitchToggle.();
+					});
 					0.1.wait;
 					if (mouseTrue == true, {
 						// ~mouseRead.reset;
@@ -203,19 +251,128 @@
 						// AppClock.play(~autoPlay);
 						~pressPlayToggle.();
 					});
+					~fileNameText.value_(~fileName);
+					~pickerMenu = ~pickerMenu.addFirst(~fileName);
+					~picker.items_(~pickerMenu);
+					~pathDict[~fileName] = ~path;
 				});
 				// 0.3.wait;
 				// ~posMax = (~buf.numFrames - 1);
 				// 0.3.wait;
-				~fileNameText.value_(~fileName);
-				if(~picker.value != 0, {
-					~picker.value_(0);
-					~bufMode.();
-				});
-				~picker.items_([~fileName, "White Noise", "Pink Noise", "Brown Noise", "Microphone"]);
+				// if(~picker.value != 0, {
+				// 	~picker.value_(0);
+				// 	~bufMode.();
+				// });
+				// ~picker.items_([~fileName, "White Noise", "Pink Noise", "Brown Noise", "Microphone"]);
 			}));
-		}, path:~currentPath)
+		}, path:~path)
 	});
+
+	~inputButton = Button.new(w)
+	.font_(~mainFont)
+	.canFocus_(false)
+	.fixedWidth_(70)
+	.states_([["RECORD", Color.gray(0.8), ~buttonColor], ["RECORD", Color.red, ~buttonColor]])
+	.action_({
+		if(~inputButton.value == 1, {
+			~temp = Synth(\recBuf, [\buf, ~rec]);
+		});
+		if(~inputButton.value == 0, {
+			~temp.free;
+			~buf = ~rec;
+			if(~pickerMenu.includesEqual("Recording") == false, {
+				~pickerMenu = ~pickerMenu.add("Recording");
+				~picker.items_(~pickerMenu);
+				~picker.value_(~pickerMenu.size - 1);
+			});
+		});
+	});
+
+	~nPlayButton = Button.new(w)
+	.font_(~mainFont)
+	.canFocus_(false)
+	.fixedWidth_(80)
+	.value_(1)
+	.states_([["PLAY", Color.green, ~buttonColor], ["PLAY", Color.gray(0.8), ~buttonColor]])
+	.action_({
+		~nPlayAction = {
+			var endPos;
+			if (~nPlayButton.value == 0, {
+				if (~switch.value == 0, {
+					~setButtonState.(~switchControls, 1);
+				});
+				~play.free;
+				~nPlayBus.setSynchronous(0);
+				if (~nRateValue < 0, {
+					endPos = 0;
+				});
+				if (~nRateValue >= 0, {
+					endPos = 1;
+				});
+				~play = Synth(\nPlay, [\buf, ~buf, \rate, ~nRateValue, \phase, 1 + (~nPosValue*2), \startPos, ~nPosValue, \endPos, endPos, \numFrames, ~buf.numFrames]);
+
+				~nPlay.reset;
+				AppClock.play(~nPlay);
+			});
+			if (~nPlayButton.value == 1, {
+				~play.free;
+				~nPlay.stop;
+				~nPlayBus.setSynchronous(0);
+			});
+		};
+		~nPlayAction.();
+	});
+
+	~pressNPlayButton = {
+		~nPlayButton.value_((~nPlayButton.value+1)%2);
+		~nPlayAction.();
+	};
+
+	~nPlayButtonControls = [~nPlayButton, ~pressNPlayButton];
+
+
+	~nPlaySlider = Slider.new(w)
+	.orientation_(\horizontal)
+	.background_(Color.gray(0.8, 0.1))
+	.fixedWidth_(~sliderWidth)
+	.action_({
+		var val, endPos;
+		if (~nRateValue < 0, {
+			endPos = 0;
+		});
+		if (~nRateValue >= 0, {
+			endPos = 1;
+		});
+
+		~nPosValue = ~nPlaySlider.value;
+		if(~nPlayButton.value == 0, {
+			~play.free;
+			~play = Synth(\nPlay, [\buf, ~buf, \rate, ~nRateValue, \phase, 1+ (~nPosValue*2), \startPos, ~nPosValue, \endPos, endPos, \numFrames, ~buf.numFrames]);
+		});
+	});
+	~nPlayBox = TextField(w)
+	.value_(~nPosValue);
+
+	~nRateKnob = Knob.new(w)
+	.fixedWidth_(20)
+	.fixedHeight_(20)
+	.value_(~nRateValue.linlin(-2, 2, 0, 1))
+	.centered_(true)
+	.action_({
+		var endPos;
+		~nRateValue = ~nRateKnob.value.linlin(0, 1, -2, 2);
+		if (~nRateValue < 0, {
+			endPos = 0;
+		});
+		if (~nRateValue >= 0, {
+			endPos = 1;
+		});
+		if(~nPlayButton.value == 0, {
+			~play.free;
+			~play = Synth(\nPlay, [\buf, ~buf, \rate, ~nRateValue, \phase, 1+ (~nPosValue*2), \startPos, ~nPosValue, \endPos, endPos, \numFrames, ~buf.numFrames]);
+		});
+	});
+
 
 	~switch = Button.new(w)
 	.font_(~mainFont)
@@ -224,19 +381,14 @@
 	.fixedWidth_(80)
 	.value_(1)
 	// .states_([["⏻", Color.green, Color.fromHexString("#2185b0")], ["⏻", Color.gray(0.8), Color.fromHexString("#2185b0")]])
-	.states_([["PLAY", Color.green, ~buttonColor], ["PLAY", Color.gray(0.8), ~buttonColor]])
+	.states_([["GRAIN", Color.green, ~buttonColor], ["GRAIN", Color.gray(0.8), ~buttonColor]])
 	.action_({
 		~switchAction = {
 			if (~switch.value == 0, {
+				if(~nPlayButton.value == 0, {
+					~setButtonState.(~nPlayButtonControls, 1);
+				});
 				~grainGroup.set(\amp, ~ampValue);
-				if (~picker.value > 0, {
-					~inputSwitch.(input: \sig);
-					// "sig".postln;
-				});
-				if (~picker.value == 0, {
-					~inputSwitch.(input: \buf);
-					// "buf".postln;
-				});
 			});
 			if (~switch.value == 1, {
 				~grainGroup.set(\amp, 0);
@@ -256,7 +408,7 @@
 	~mouseToggle = Button.new(w)
 	.font_(~mainFont)
 	.canFocus_(false)
-	.fixedWidth_(150)
+	.fixedWidth_(130)
 	.states_([["Mouse Control", Color.green, ~buttonColor], ["Mouse Control", Color.gray(0.8), ~buttonColor]])
 	.action_({
 		~mouseToggleAction = {
@@ -293,7 +445,7 @@
 	.font_(~mainFont)
 	.canFocus_(false)
 	.fixedWidth_(100)
-	.states_([["Autoplay", Color.green, ~buttonColor], ["Autoplay", Color.gray(0.8), ~buttonColor]])
+	.states_([["Scrub", Color.green, ~buttonColor], ["Scrub", Color.gray(0.8), ~buttonColor]])
 	.action_({
 		~playToggleAction = {
 			if (~playToggle.value == 0, {
@@ -324,8 +476,8 @@
 		~playToggleAction.();
 	});
 
-	~onButtons = [~switch, ~recordButton, ~mouseToggle, ~playToggle];
-	~offButtons = [~switchOff, ~recordButtonOff, ~mouseToggleOff, ~playToggleOff];
+	~onButtons = [~nPlayButton, ~switch, ~recordButton, ~mouseToggle, ~playToggle];
+	~offButtons = [~nPlayButtonOff, ~switchOff, ~recordButtonOff, ~mouseToggleOff, ~playToggleOff];
 
 	~pressPlayToggle = {
 		// if (~playToggle.value == 0, {
@@ -378,12 +530,14 @@
 			~bufGrain.set(\amp, ~ampValue);
 			~sigGrain.set(\amp, 0);
 			~setButtonState.(~switchControls, 0);
+			~inMode = \buf;
 		});
 		if(input == \sig, {
 			// "sig".postln;
 			~bufGrain.set(\amp, 0);
 			~sigGrain.set(\amp, ~ampValue);
 			~setButtonState.(~switchControls, 0);
+			~inMode = \sig;
 		});
 	};
 
@@ -521,7 +675,7 @@
 	.fixedWidth_(~sliderWidth)
 	.action_({
 		var val;
-		if(~picker.value == 0, {
+		if(~inMode == \buf, {
 			~rateValue = ~rateSlider.value.linlin(0, 1, ~rateMin, ~rateMax);
 			~grainGroup.set(\rate, ~rateValue);
 			~rateBox.value_(~rateValue.round(0.01));
@@ -538,7 +692,7 @@
 				});
 			});
 		});
-		if(~picker.value > 0, {
+		if(~inMode == \sig, {
 			~rateSlider.value_(0.5);
 		});
 	})
@@ -546,14 +700,14 @@
 	.value_(~rateValue.linlin(~rateMin, ~rateMax, 0, 1));
 	~rateBox = TextField(w)
 	.mouseDownAction_({
-		if(~picker.value == 0, {
+		if(~inMode == \buf, {
 			~rateBox.value_("");
 		});
 	})
 	.value_(~rateValue)
 	.action_({
 		var val;
-		if(~picker.value == 0, {
+		if(~inMode == \buf, {
 			if(~rateBox.value == "", {
 				~rateBox.value_(~rateValue.round(0.01));
 			});
@@ -577,7 +731,7 @@
 			});
 			~rateBox.value_(val.asFloat);
 		});
-		if(~picker.value > 0 , {
+		if(~inMode == \sig, {
 			~rateBox.value_("--");
 		});
 		w.focus;
@@ -587,14 +741,14 @@
 
 	~pRateLabel = StaticText(w)
 	.font_(~mainFont)
-	.string_("rate (autoplay)")
+	.string_("rate (scrub)")
 	.fixedWidth_(~textWidth);
 	~pRateSlider = Slider.new(w)
 	.background_(Color.gray(0.8, 0.1))
 	.fixedWidth_(~sliderWidth)
 	.action_({
 		var val;
-		if(~picker.value == 0, {
+		if(~inMode == \buf, {
 			~pRateValue = ~pRateSlider.value.linlin(0, 1, ~pRateMin, ~pRateMax);
 			// ~sound.set(\pRate, ~pRateValue);
 			~pRateBox.value_(~pRateValue.round(0.01));
@@ -626,7 +780,7 @@
 				});
 			});
 		});
-		if(~picker.value > 0, {
+		if(~inMode == \sig, {
 			~pRateSlider.value_(0.5);
 		});
 	})
@@ -634,14 +788,14 @@
 	.value_(~pRateValue.linlin(~pRateMin, ~pRateMax, 0, 1));
 	~pRateBox = TextField(w)
 	.mouseDownAction_({
-		if(~picker.value == 0, {
+		if(~inMode == \buf, {
 			~pRateBox.value_("");
 		});
 	})
 	.value_(~pRateValue)
 	.action_({
 		var val;
-		if(~picker.value == 0, {
+		if(~inMode == \buf, {
 			if(~pRateBox.value == "", {
 				~pRateBox.value_(~pRateValue.round(0.01));
 			});
@@ -665,7 +819,7 @@
 			});
 			~pRateBox.value_(val.asFloat.round(0.01));
 		});
-		if(~picker.value > 0, {
+		if(~inMode == \sig, {
 			~pRateBox.value_("--");
 		});
 		// ~setButtonState.(~playToggleControls, 0);
@@ -684,7 +838,7 @@
 	.fixedWidth_(~sliderWidth)
 	.action_({
 		var val;
-		if(~picker.value == 0, {
+		if(~inMode == \buf, {
 			~posValue = ~posSlider.value.linlin(0, 1, ~posMin, ~posMax);
 			~grainGroup.set(\pos, ~posValue);
 			~posBox.value_(~posValue.round(0.001));
@@ -704,7 +858,7 @@
 				});
 			});
 		});
-		if(~picker.value > 0, {
+		if(~inMode == \sig, {
 			~posSlider.value_(0.5);
 		});
 	})
@@ -712,14 +866,14 @@
 	.value_(~posValue.linlin(~posMin, ~posMax, 0, 1));
 	~posBox = TextField(w)
 	.mouseDownAction_({
-		if(~picker.value == 0, {
+		if(~inMode == \buf, {
 			~posBox.value_("");
 		});
 	})
 	.value_(~posValue)
 	.action_({
 		var val;
-		if(~picker.value == 0, {
+		if(~inMode == \buf, {
 			if(~posBox.value == "", {
 				~posBox.value_(~posValue.round(0.001));
 			});
@@ -744,7 +898,7 @@
 			});
 			~posBox.value_(val);
 		});
-		if(~picker.value > 0, {
+		if(~inMode == \sig, {
 			~posBox.value_("--");
 		});
 		w.focus;
@@ -829,14 +983,6 @@
 		if(~switch.value == 0, {
 			// ~sound.set(\amp, ~ampValue, \ampLag, 0.2);
 			~grainGroup.set(\amp, ~ampValue);
-			if (~picker.value > 0, {
-				~inputSwitch.(input: \sig);
-				// "sig".postln;
-			});
-			if (~picker.value == 0, {
-				~inputSwitch.(input: \buf);
-				// "buf".postln;
-			});
 		});
 		~ampBox.value_(~ampBoxString + "dB");
 	})
@@ -881,21 +1027,13 @@
 		// ~ampValue.postln;
 		if(~switch.value == 0, {
 			~grainGroup.set(\amp, ~ampValue);
-			if (~picker.value > 0, {
-				~inputSwitch.(input: \sig);
-				// "sig".postln;
-			});
-			if (~picker.value == 0, {
-				~inputSwitch.(input: \buf);
-				// "buf".postln;
-			});
 		});
 		w.focus;
 	})
 	.font_(~boxFont)
 	.fixedWidth_(70);
 
-
+	~nPosControl = [~nPlaySlider, ~nPlayBox, 0, 1];
 	~rateControl = [~rateSlider, ~rateBox, ~rateMin, ~rateMax];
 	~panControl = [~panSlider, ~panBox, ~panMin, ~panMax];
 	~durControl = [~durSlider, ~durBox, ~durMin, ~durMax];
@@ -904,16 +1042,30 @@
 	~pRateControl = [~pRateSlider, ~pRateBox, ~pRateMin, ~pRateMax];
 	~ampControl = [~ampSlider, ~ampBox, ~ampMin, ~ampMax];
 
+	SynthDef.new(\nPlay, {
+		arg buf, gate = 1, out, rate = 1, phase = 1, numFrames, startPos = 0, endPos = 1;
+		var sig, env, pos;
+		sig = PlayBuf.ar(1, buf, rate*BufRateScale.ir(buf), startPos:startPos.linlin(0, 1, 0, numFrames));
+		env = EnvGen.ar(Env.asr(releaseTime: 0.1), gate, doneAction:2);
+		pos = Line.ar(startPos, endPos, (abs(numFrames/s.sampleRate*(endPos-startPos)/rate)), doneAction:2);
+		// pos = LFSaw.ar(mul/(numFrames/(s.sampleRate)), phase).range(0, 1);
+		sig = sig * env;
+		sig = sig!2;
+		Out.kr(~nPlayBus, pos);
+		Out.ar(out, sig);
+	}).add;
+
 	SynthDef.new(\bufGrain, {
-		arg buf, rate, pan, dur, freq, pos, amp = 1, ampLag = 0.2,
+		arg buf, rate, pan, dur, freq, pos, amp = 1, ampLag = 0.2, panLag = 0.2,
 		out = 0;
 		var sig, env, ampCheck;
 		amp = amp.lag(ampLag);
+		pan = pan.lag(panLag);
 		sig = GrainBuf.ar(2,
 			Impulse.ar(freq),
-			dur:dur,
-			rate:rate,
-			sndbuf:buf,
+			dur: dur,
+			rate: rate,
+			sndbuf: buf,
 			pan: pan,
 			pos: pos
 		);
@@ -941,6 +1093,13 @@
 		Out.ar(out, sig);
 	}).add;
 
+	SynthDef.new(\recBuf, {
+		arg in = 0, buf, out;
+		var sig;
+		sig = SoundIn.ar(in);
+		RecordBuf.ar(sig, buf);
+	}).add;
+
 	SynthDef.new(\wNoise, {
 		arg out;
 		var sig;
@@ -961,18 +1120,6 @@
 		sig = BrownNoise.ar(mul:0.2);
 		Out.ar(out, sig);
 	}).add;
-
-	SynthDef.new(\sine, {
-	});
-
-	SynthDef.new(\sq, {
-	});
-
-	SynthDef.new(\tri, {
-	});
-
-	SynthDef.new(\saw, {
-	});
 
 	SynthDef.new(\mic, {
 		arg in = 0, out;
@@ -1006,7 +1153,7 @@
 			~controlSet.(~freqControl, xRead, \slider);
 			~grainGroup.set(\freq, xRead.linlin(0, 1, ~freqMin, ~freqMax));
 			if (~playToggle.value == 1, {
-				if(~picker.value == 0, {
+				if(~inMode == \buf, {
 					~controlSet.(~posControl, yRead, \slider);
 					~grainGroup.set(\pos, yRead.linlin(0, 1, ~posMin, ~posMax));
 				});
@@ -1024,6 +1171,32 @@
 			0.01.wait;
 		}.loop;
 	});
+
+	~nPlay = Routine.new({
+		{
+			var pos;
+			pos = ~nPlayBus.getSynchronous;
+			~nPosValue = pos;
+
+			// pos.postln;
+			if(~nPosValue.round(0.001) == 1, {
+				// "reset".postln;
+				~controlSet.(~nPosControl, 0, \slider);
+				~nPosValue = 0;
+				~nPlayBus.setSynchronous(0);
+				// ~nPlayBus.getSynchronous.postln;
+				~setButtonState.(~nPlayButtonControls, 1);
+
+			}, {
+				// pos.postln;
+				~controlSet.(~nPosControl, pos.round(0.001), \box);
+			}
+			);
+			0.01.wait;
+		}.loop;
+	});
+
+
 
 	~autoPlay = Routine.new({
 		{
@@ -1139,8 +1312,9 @@
 		.action({
 			~warningWindow.(message: "Please select a valid file.");
 		});
-		~sourceSig = Synth(\wNoise, [\out, ~sigBus], ~sourceGroup);
+		// ~sourceSig = Synth(\wNoise, [\out, ~sigBus], ~sourceGroup);
 		~inputSwitch.(input: \buf);
+		~inMode = \buf;
 	};
 
 	~sigMode = {
@@ -1164,20 +1338,9 @@
 		~playToggle.visible_(false);
 		~playToggleOff.visible_(true)
 		.action_({
-			~warningWindow.(message: "Autoplay unavailable in current mode.");
+			~warningWindow.(message: "Scrubbing unavailable in current mode.");
 		});
-		if(~picker.value == 1, {
-			~sourceSig = Synth(\wNoise, [\out, ~sigBus], ~sourceGroup);
-		});
-		if(~picker.value == 2, {
-			~sourceSig = Synth(\pNoise, [\out, ~sigBus], ~sourceGroup);
-		});
-		if(~picker.value == 3, {
-			~sourceSig = Synth(\bNoise, [\out, ~sigBus], ~sourceGroup);
-		});
-		if(~picker.value == 4, {
-			~sourceSig = Synth(\mic, [\out, ~sigBus], ~sourceGroup);
-		});
+		~inMode = \sig;
 	};
 
 	~warningWindow = {
@@ -1276,7 +1439,7 @@
 };
 
 ~winLoad = {
-	w = Window("granulator", Rect(~xPosWin, ~yPosWin, ~xSizeWin, ~ySizeWin))
+	w = Window("blueGrain", Rect(~xPosWin, ~yPosWin, ~xSizeWin, ~ySizeWin))
 	.asView.fixedWidth_(570)
 	.background_(Color.fromHexString("#84acbd"))
 	.alwaysOnTop_(true)
@@ -1323,8 +1486,15 @@
 			VLayout(
 				HLayout(
 					~fileButton,
+					~inputButton,
 					// ~fileNameText,
 					~picker,
+				),
+				HLayout(
+					~nPlayButton,
+					~nPlayButtonOff,
+					~nPlaySlider,
+					~nRateKnob
 				),
 				HLayout(
 					~switch,
@@ -1391,9 +1561,10 @@
 	~bufGrain = Synth(\bufGrain, [\buf, ~buf, \rate, ~rateValue, \pan, ~panValue, \dur, ~durValue, \freq, ~freqValue], ~grainGroup);
 	~sigGrain = Synth(\sigGrain, [\in, ~sigBus, \rate, ~rateValue, \pan, ~panValue, \dur, ~durValue, \freq, ~freqValue, \amp, 0], ~grainGroup);
 	~play = Synth(\autoPlay, [\phase, 1 + (abs(~posBox.value.asFloat)*2), \mul, ~pRateValue]);
-	~sourceSig = Synth(\wNoise, [\out, ~sigBus], ~sourceGroup);
+	// ~sourceSig = Synth(\wNoise, [\out, ~sigBus], ~sourceGroup);
 	AppClock.play(~ampCheck);
-	~setButtonState.(~switchControls, 0);
+	~setButtonState.(~switchControls, 1);
+	~setButtonState.(~nPlayButtonControls, 1);
 	~setButtonState.(~mouseToggleControls, 1);
 	~setButtonState.(~playToggleControls, 1);
 	w.front;
@@ -1403,6 +1574,113 @@
 	});
 };
 
+// OSCdef.new(\gyroSwitch, {
+// 	arg input;
+// 	OSCdef.freeAll;
+// 	if (input[1] == 1.0, {
+// 		if (~gyroSwitch == false, {
+// 			~gyroSwitch.postln;
+// 			~oscDefs2.();
+// 			}, {
+// 				~gyroSwitch.postln;
+// 				~oscDefs.();
+// 			}
+// 		);
+// 	});
+// }, "/button2");
+
+
+~oscDefs = {
+	~gryoSwitch = false;
+	OSCdef.newMatching(\switch, {
+		arg input;
+		if (input[1] == 1.0, {
+			AppClock.play({~pressSwitchToggle.()});
+		});
+	}, "/button1");
+
+	OSCdef.newMatching(\dur, {
+		arg input;
+		~durValue = input[1].linlin(0, 1, ~durMin, ~durMax);
+		AppClock.play({~controlSet.(~durControl, ~durValue.round(0.01), \box)});
+		~grainGroup.set(\dur, ~durValue);
+	}, "/fader1");
+
+	OSCdef.newMatching(\pan, {
+		arg input;
+		~panValue = input[1].linlin(0, 1, 1, -1);
+		AppClock.play({~controlSet.(~panControl, ~panValue.round(0.01), \box)});
+		~grainGroup.set(\pan, ~panValue);
+	}, "/group1/y");
+
+	OSCdef.newMatching(\gRate, {
+		arg input;
+		~rateValue = input[1].linlin(0, 1, ~rateMin, ~rateMax);
+		AppClock.play({~controlSet.(~rateControl, ~rateValue.round(0.01), \box)});
+		~grainGroup.set(\rate, ~rateValue);
+	}, "/fader2");
+
+	OSCdef.newMatching(\pos, {
+		arg input;
+		~posValue = input[1].linlin(0, 1, ~posMin, ~posMax);
+		AppClock.play({~controlSet.(~posControl, ~posValue.round(0.01), \box)});
+		~grainGroup.set(\pos, ~posValue);
+	}, "/fader3");
+
+	OSCdef.newMatching(\dord, {
+		arg input;
+		~freqValue = input[1].linlin(0, 1, ~freqMin, ~freqMax);
+		AppClock.play({~controlSet.(~freqControl, ~freqValue.round(0.01), \box)});
+		~grainGroup.set(\freq, ~freqValue);
+	}, "/fader4");
+};
+
+~oscDefs2 = {
+	~gyroSwitch = true;
+	OSCdef.newMatching(\switch, {
+		arg input;
+		if (input[1] == 1.0, {
+			AppClock.play({~pressSwitchToggle.()});
+		});
+	}, "/button1");
+
+	OSCdef.newMatching(\dur, {
+		arg input;
+		~durValue = input[1].linlin(0, 1, ~durMin, ~durMax);
+		AppClock.play({~controlSet.(~durControl, ~durValue.round(0.01), \box)});
+		~grainGroup.set(\dur, ~durValue);
+	}, "/fader1");
+
+	OSCdef.newMatching(\dord, {
+		arg input;
+		~freqValue = input[1].linlin(0, 1, ~freqMin, ~freqMax);
+		AppClock.play({~controlSet.(~freqControl, ~freqValue.round(0.01), \box)});
+		~grainGroup.set(\freq, ~freqValue);
+	}, "/fader4");
+
+
+	OSCdef.newMatching(\pan, {
+		arg input;
+		~panValue = input[1].linlin(0, 1, 1, -1);
+		AppClock.play({~controlSet.(~panControl, ~panValue.round(0.01), \box)});
+		~grainGroup.set(\pan, ~panValue);
+	}, "/group1/y");
+
+	OSCdef.newMatching(\pos, {
+		arg input;
+		~posValue = input[1].linlin(0, 1, ~posMin, ~posMax);
+		AppClock.play({~controlSet.(~posControl, ~posValue.round(0.01), \box)});
+		~grainGroup.set(\pos, ~posValue);
+	}, "/group1/x");
+
+	OSCdef.newMatching(\gRate, {
+		arg input;
+		~rateValue = input[1].linlin(0, 1, ~rateMin, ~rateMax);
+		AppClock.play({~controlSet.(~rateControl, ~rateValue.round(0.01), \box)});
+		~grainGroup.set(\rate, ~rateValue);
+	}, "/group1/z");
+
+};
 
 ~startup = Routine.new({
 	Window.closeAll;
@@ -1413,10 +1691,10 @@
 		~init.();
 		0.5.wait;
 		~winLoad.();
+		~oscDefs.();
+		// ~oscDefs2.();
 	});
 });
 
 AppClock.play(~startup);
 )
-//Last updated 2024-01-07 22:26:58
-//reverted last changes, will fix record function later
